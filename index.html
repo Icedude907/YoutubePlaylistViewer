@@ -1,0 +1,226 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <meta http-equiv="X-UA-Compatible" content="ie=edge">
+    <title>Youtube channel full listing.</title>
+
+    <script src="https://apis.google.com/js/api.js"></script>
+    <script>
+    /**
+    * Adapted from:
+    * Sample JavaScript code for youtube.playlistItems.list
+    * https://developers.google.com/explorer-help/guides/code_samples#javascript
+    */
+
+    var readChunkSize = 50;
+    var outString = "";
+    var outStringArr = [];
+    var videoNumber = 1;
+
+    var nextPgToken = null;
+    var clientLoaded = false;
+    var knownPlaylistLength = null;
+    var isPlaylistLengthKnown = false;
+    var videosReadCount = 0;
+
+    var commaList = ""
+
+    function sleep(ms) {
+        return new Promise(resolve => setTimeout(resolve, ms));
+    }
+
+    async function connectGAPI(){
+        if(!clientLoaded){
+            document.getElementById("loadClient").innerHTML = "Loading GAPI";
+            await loadClient();
+            clientLoaded = true;
+        }
+        return;
+    }
+    function loadClient() {
+        gapi.client.setApiKey("AIzaSyArLG1TIzwKVsNDjq698_Rqdhfz6hKJ7xY");
+        return gapi.client.load("https://www.googleapis.com/discovery/v1/apis/youtube/v3/rest")
+            .then(function() { document.getElementById("loadClient").innerHTML = "GAPI client loaded"; },
+                function(err) { document.getElementById("loadClient").innerHTML = "Error loading GAPI client for API", err; });
+    }
+    gapi.load("client");
+
+
+    async function getUploadsPlaylistFromUserID() {
+        await connectGAPI();
+        return gapi.client.youtube.channels.list({
+            "part": "contentDetails",
+            "id": document.getElementById("gUPFUI").value,
+        }).then(
+            function(response) {
+                console.log("Response", response);
+                document.getElementById("gUPFUIRes").innerHTML = response.result.items[0].contentDetails.relatedPlaylists.uploads;
+            }, function(err) { 
+                document.getElementById("gUPFUIRes").innerHTML = "Execute error" + err; 
+            }
+        );
+    }
+
+    async function getPlaylistLength(){
+        await connectGAPI();
+        var listThis = {
+            "part": "id",
+            "playlistId": document.getElementById("gEoP").value,
+            "maxResults": 0,
+        }
+        await gapi.client.youtube.playlistItems.list(listThis).then(function(response) {
+            console.log("Response", response);
+            knownPlaylistLength = response.result.pageInfo.totalResults;
+            isPlaylistLengthKnown = true;
+            document.getElementById("listTotal").innerHTML = knownPlaylistLength;
+            document.getElementById("listRead").innerHTML = videosReadCount;
+        }, function(err) { console.log("Execute error" + err); });
+        return;
+    }
+
+    function prettyDate(date){
+        return date.getDate() + "/" + date.getMonth() + "/" + date.getFullYear() + " - " + date.getHours() + ":" + date.getMinutes() + ":" + date.getSeconds();
+    }
+
+    async function getALLElementsOfPlaylist(){
+        await connectGAPI();
+        if(!isPlaylistLengthKnown){
+            await getPlaylistLength();
+        }
+        while(videosReadCount < knownPlaylistLength){
+            var listThis = {
+                "part": "snippet",
+                "playlistId": document.getElementById("gEoP").value,
+                "maxResults": Math.min(knownPlaylistLength - videosReadCount, readChunkSize),
+            }
+            //Viewcount
+            var findingViewCount = {
+                "part": "statistics",
+                "id": "",
+            }
+            if(nextPgToken != null){
+                listThis.pageToken = nextPgToken;
+            }
+            await gapi.client.youtube.playlistItems.list(listThis).then(function(response) {
+                    lastChunkSize = response.result.items.length;
+                    document.getElementById("listRead").innerHTML = (videosReadCount += readChunkSize);
+                    nextPgToken = response.result.nextPageToken;
+
+                    //Name and links.
+                    for(var i = 0; i < response.result.items.length; i++){
+                        outStringArr[videosReadCount - readChunkSize + i] = "";
+                        outStringArr[videosReadCount - readChunkSize + i] += 
+                        "<tr><td>" + 
+                            videoNumber++ +
+                        "</td><td>" +
+                            response.result.items[i].snippet.title +
+                        "</td><td>" +
+                            prettyDate(new Date(response.result.items[i].snippet.publishedAt)) + 
+                        "</td><td><a href=\"https://www.youtube.com/watch?v=" + response.result.items[i].snippet.resourceId.videoId + "\">Link</a></td><td><button onclick=\"play('" +
+                            response.result.items[i].snippet.resourceId.videoId +
+                        "\')\">Play</a></td>";
+                    }
+                    findingViewCount.id += response.result.items[0].snippet.resourceId.videoId;
+                    for(var i = 1; i < response.result.items.length; i++){
+                        findingViewCount.id += "," + response.result.items[i].snippet.resourceId.videoId;
+                    }
+                },
+                function(err) { console.log("Execute error" + err); });
+            
+            await gapi.client.youtube.videos.list(findingViewCount).then(function(vidRes){
+                for(var i = 0; i < vidRes.result.items.length; i++){
+                    outStringArr[videosReadCount - readChunkSize + i] +=
+                    "<td>" +
+                        vidRes.result.items[i].statistics.viewCount +
+                    "</td><td>" +
+                        vidRes.result.items[i].statistics.likeCount +
+                    "</td><td>" +
+                        vidRes.result.items[i].statistics.dislikeCount +
+                    "</td></tr>";
+                }
+            }, function(err) { console.log("Execute error" + err); });
+        }
+        document.getElementById("listRead").innerHTML = ("Completed. May lag as elements are added to the DOM");
+        document.getElementById("pList").innerHTML += outStringArr.join("");
+    }
+
+    var embeddedPlayer = null;
+    var embeddedPlayerContainer = null;
+    function play(id){
+        if(embeddedPlayer == null){
+            embeddedPlayer = document.getElementById("playElement");
+            embeddedPlayerContainer = document.getElementById("playElementContainer");
+        }
+        embeddedPlayer.setAttribute("src", ("https://www.youtube.com/embed/" + id + "?&autoplay=1"));
+        embeddedPlayerContainer.setAttribute("class", "");
+    }
+    </script>
+
+
+    <style>
+        p{
+            display: inline;
+        }
+        table {
+            font-family: arial, sans-serif;
+            border-collapse: collapse;
+        }
+
+        td, th {
+            border: 1px solid #dddddd;
+            text-align: left;
+            padding: 8px;
+        }
+
+        tr:nth-child(even) {
+            background-color: #dddddd;
+        }
+
+        /* #pList{
+           display: inline;
+        } */
+        .hidden{
+            display: none;
+        }
+
+    </style>
+</head>
+<body>
+    <div id="playElementContainer" class="hidden">
+        <iframe id="playElement" width="560" height="315" src="" frameborder="0" allow="accelerometer; autoplay; encrypted-media; gyroscope; picture-in-picture" allowfullscreen></iframe>
+        <br>
+    </div>
+    <p id="loadClient">Additional status messages will appear here.</p>
+    <br>
+    <br>
+    <button onclick="getUploadsPlaylistFromUserID()">getUploadsPlaylistFromUserID</button>
+    <input id="gUPFUI">
+    <p id="gUPFUIRes">Return value goes here.</p>
+    <br>
+    <br>
+    <button onclick="getALLElementsOfPlaylist()">getALLElementsOfPlaylist</button>
+    <button onclick="getPlaylistLength()">getPlaylistLength</button>
+    <input id="gEoP">
+    <br>
+    <p>Total number of items: </p><p id="listTotal"></p>
+    <br>
+    <p>Number read: </p><p id="listRead"></p>
+    <br>
+    <table style="width:100%">
+        <tbody id="pList">
+            <tr>
+                <th>#</th>
+                <th>Name</th>
+                <th>On (Current timezone)</th>
+                <th>Link</th>
+                <th>Play</th>
+                <th>Views</th>
+                <th>Likes</th>
+                <th>Dislikes</th>
+            </tr>
+        </tbody>
+    </table>
+</body>
+</html>
